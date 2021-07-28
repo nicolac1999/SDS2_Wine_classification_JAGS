@@ -1,0 +1,1044 @@
+---
+title: "Final Project"
+author: "Nicola Calabrese"
+date: "13/7/2021"
+output: html_document
+bibliography: ref.bib
+nocite: '@*'
+---
+
+
+
+```{r include=FALSE}
+library(plotly)
+library(highcharter) 
+library(R2jags)
+library(tidyverse)
+library(magrittr)
+library(mcmcse)
+library(bayesplot)
+library(TeachingDemos)
+library(ggplot2)
+library(gridExtra)
+library(LaplacesDemon)
+library(kableExtra)
+```
+
+
+```{r include=FALSE}
+# Set highcharter options
+options(highcharter.theme = hc_theme_smpl(tooltip = list(valueDecimals = 2)))
+```
+
+```{r include=FALSE}
+knitr::opts_chunk$set(cache = TRUE)
+set.seed(1234)
+```
+
+```{r pressure, echo=FALSE,out.height='400px',}
+knitr::include_graphics("vino.jpg")
+```
+
+# Wine quality classification 
+
+The purpose of this project is to develop an in-depth fully Bayesian analysis to  model wine quality based on physicochemical tests such as :
+
+1. fixed acidity
+2. volatile acidity
+3. citric acid
+4. residual sugar
+5. chlorides
+6. free sulfur dioxide
+7. total sulfur dioxide
+8. density
+9. pH
+10. sulphates
+11. alcohol
+
+The output variable is the quality **good** or **bad** based on these  physicochemical properties. The dataset is free available on *UCI Machine Learning Repository* , one of the most huge database of machine learning problems hold by the Center for Machine Learning and Intelligent Systems at the University of California.
+
+# Features Analysis 
+
+```{r include=FALSE}
+#Load dataset
+original_dataset<-read.csv(file='C:/Users/Nicola/Desktop/wine.csv')
+idx_train<-sample(1:nrow(original_dataset),0.8*nrow(original_dataset))
+dataset_test<-original_dataset[-idx_train,]
+dataset<-original_dataset[idx_train,]
+```
+
+As first thing let's divide the dataset into train and test with proportion equal to $80\% - 20\%$ respectively (for evaluating at the and the performances of our model) and let's see how the features are distributed and some other characteristics of the dataset.
+
+To avoid to display all the features here I report only the ones most known, for the others we are going to see only a brief summary. 
+
+
+### Fixed acidity 
+
+Fixed acidity is an important features of wines. Acids are fundamental for the wine conservation, for example a long-lived wine suitable for aging must have a relatively high fixed acidity.
+In particular fixed acids give a feeling of freshness in the mouth which must be balanced by the sensations of warmth and softness induced by alcohol and sugars.
+Based on acidity wine can be :
+
+- flat wine (low acidity)
+- quite fresh wine
+- fresh wine
+- sour wine (high acidity)
+
+
+```{r echo=FALSE,fig.align='center'}
+p1 <- plot_ly(x = ~dataset$fixed.acidity,
+              type = "histogram",
+              marker = list(color = "lightblue",
+                            line = list(color = "darkblue",
+                                        width = 2))) %>%  
+  layout(title = "Histogram of fixed acidity values",
+         xaxis = list(title = "Fixed acidity",
+                      zeroline = FALSE),
+         yaxis = list(title = "Count",
+                      zeroline = FALSE))
+p1
+```
+### pH
+
+The pH of  wine is a measure of the strength and concentration of the dissociated acids present in that medium. It is calculated using the concentration of hydrogen ions in the formula $pH = -log10[H+]$ and can be adjusted through the addition of acid or base. It plays a critical role in many aspects of winemaking, in particular wine stability and red wine colour. For wine it is usually in the range $[2.5,4]$
+
+```{r echo=FALSE,fig.align='center'}
+p2 <- plot_ly(x = ~dataset$pH,
+              type = "histogram",
+              marker = list(color = "red",
+                            line = list(color = "darkred",
+                                        width = 2))) %>%  
+  layout(title = "Histogram of pH values",
+         xaxis = list(title = "pH",
+                      zeroline = FALSE),
+         yaxis = list(title = "Count",
+                      zeroline = FALSE))
+p2
+```
+
+### Alcohol
+
+Alcohol in wine has a content varying between 4% (in some sweet sparkling wines) to 20% or more (in liqueur wines).Wines with an alcohol content of up to 10% are generally defined as "light", whereas wines with an increasing alcohol content are often defined as more or less "hot".
+In our dataset most of the wines are "light" (alcohol $\leq 10\%$) and "quite hot" (alcohol between $11-12\%$), there are only few wines "strongly alcoholic" (alcohol $\geq 15\%$)
+
+```{r echo=FALSE,fig.align='center'}
+p3 <- plot_ly(x = ~dataset$alcohol,
+              type = "histogram",
+              marker = list(color = "pink",
+                            line = list(color = "darkpink",
+                                        width = 2))) %>%  
+  layout(title = "Histogram of alcohol values",
+         xaxis = list(title = " Volume of alcohol",
+                      zeroline = FALSE),
+         yaxis = list(title = "Count",
+                      zeroline = FALSE))
+p3
+```
+### Sulfites
+
+Sulfites are a food preservative widely used in winemaking, thanks to their ability to maintain the flavor and freshness of wine. In fact thanks to their antimicrobial properties, these compounds can prevent bacterial growth to prolong the shelf life of wines and other products. Moreover they improve taste,appearance and enhance flavor. Less sulfites are always better, but in general a typical red wine has around $50-100 \ \ mg/L$ of them.
+
+```{r echo=FALSE,fig.align='center'}
+p4 <- plot_ly(x = ~dataset$sulphates,
+              type = "histogram",
+              marker = list(color = "orange",
+                            line = list(color = "darkorange",
+                                        width = 2))) %>%  
+  layout(title = "Histogram of sulfites concentration",
+         xaxis = list(title = "Sulfites concentration",
+                      zeroline = FALSE),
+         yaxis = list(title = "Count",
+                      zeroline = FALSE))
+p4
+```
+### Dataset summary
+
+Here I report the main statistics of all the features.
+
+```{r echo=FALSE}
+matrix<-sapply(dataset[,1:ncol(dataset)-1],FUN=function(x) return(list(min(x),max(x),median(x),round(mean(x),3),round(sd(x),3))))
+rownames(matrix)<-c('Min','Max','Median','Mean','Standard Dev')
+colnames(matrix)<-c("Fixed acidity","Volatile acidity","Citric acid",
+                    "Residual sugar","Chlorides","Free sulfur dioxide",
+                    "Total sulfur dioxide", "Density","pH","Sulphates", "Alcohol")
+knitr::kable(t(matrix), digits = 4)
+
+```
+
+### Output distribution 
+
+The number of wines that have been tested in total is `r nrow(original_dataset)`, this imply that the number of observation in the training set is `r nrow(dataset)`  and as wee can see it is almost perfectly balanced so we don't need some oversampling method to increase the data of the minority class.
+
+
+
+```{r echo=FALSE}
+fig <- plot_ly(dataset, labels = ~quality, type = 'pie',
+               textposition = 'inside',
+        textinfo = 'label+percent',
+        insidetextfont = list(color = '#FFFFFF'),
+        hoverinfo = 'text',
+        marker = list(line = list(color = '#FFFFFF', width = 1)),
+        showlegend = FALSE)
+fig <- fig %>% layout(title = 'Percentage of wine classes in dataset',
+                      xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                      yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+fig
+```
+
+# Observation on relevance of the features
+
+At first glance we can see the importance of one features in its capacity of dividing perfectly the two classes. Unfortunately there isn't a feature for which wines belonging to different classes have different values,values are evenly distributed between classes, only for **alcohol** and for **total sulfur dioxide**
+we can have a slight separation.
+
+```{r echo=FALSE}
+g_index<-dataset$quality=='good'
+b_index<-dataset$quality=='bad'
+
+hc <- hchart(
+  density(dataset[g_index,]$alcohol), type = "area", 
+  color = "steelblue", name = "good"
+) %>%
+  hc_add_series(
+    density(dataset[b_index,]$alcohol), type = "area",
+    color = "#B71C1C", 
+    name = "bad"
+  )%>% 
+  hc_title(text = "Alcohol density distribution ")
+
+hc
+```
+
+Bad wines seems to have a small amount of alcohol, and wines with an high amount of alcohol are more likely to be Good wines.
+
+```{r echo=FALSE}
+
+hc <- hchart(
+  density(dataset[g_index,]$total.sulfur.dioxide), type = "area", 
+  color = "steelblue", name = "good")%>%
+  hc_add_series(
+    density(dataset[b_index,]$total.sulfur.dioxide), type = "area",
+    color = "#B71C1C", 
+    name = "bad"
+  ) %>% 
+  hc_title(text = "Total sulfur dioxide density distribution ")
+
+hc
+```
+
+Free sulfur dioxide helps to protect wine from oxidation and spoilage, but as we can see wine with an high amount of this molecule are likely to be classified as bad. In fact an excessive quantity of $FS0_2$ can be perceptible to consumers,by masking the wine's own fruit aromas and by contributing a sharp,bitter,metallic,chemical flavor or sensation.
+
+# Correlation matrix
+
+Let's compute the Pearson correlation coefficient between all the couples of features and see if there are features strongly correlated.
+
+
+```{r echo=FALSE}
+fntltp <- JS("function(){
+                  return this.series.xAxis.categories[this.point.x] + ' ~ ' +
+                         this.series.yAxis.categories[this.point.y] + ': <b>' +
+                         Highcharts.numberFormat(this.point.value, 2)+'</b>';
+               ; }")
+cor_colr <- list( list(0, '#FF5733'),
+                    list(0.5, '#F8F5F5'),
+                    list(1, '#2E86C1')
+  )
+hchart(round(cor(dataset[,1:ncol(dataset)-1]),2))%>% 
+    hc_chart(type = "heatmap") %>% 
+    hc_xAxis(categories = colnames(dataset[,1:ncol(dataset)-1]), title = NULL) %>% 
+    hc_yAxis(categories = colnames(dataset[,1:ncol(dataset)-1]), title = NULL) %>% 
+    #hc_add_series(data = ds) %>% 
+    hc_plotOptions(
+           series = list(
+             boderWidth = 0,
+             dataLabels = list(enabled = TRUE)
+    )) %>% 
+    #hc_tooltip(formatter = fntltp) %>% 
+    hc_legend(align = "right", layout = "vertical",
+              margin = 10,# verticalAlign = "bottom",
+              y = -100, symbolHeight = 200) %>% 
+    hc_colorAxis(stops= cor_colr,min=-1,max=1)
+
+```
+
+As we can expected some features are strongly correlated such as **fixed acids-pH**, grater the presence of acids lower the pH (think to pH formula and to logarithmic scale ), but also **density-alcoholic content**, in fact grater the quantity of ethanol lower the density of the wine.
+
+
+# Bayesian Logistic Regression 
+
+In our set-up the response variable **wine quality** can be modeled as a Bernoulli distribution :
+$$
+Y_i \in {0,1} \  where\  0\  is\  bad\  and\  1\  is\  good
+$$
+In particular Bernoulli distribution belongs to the exponential family distribution that's why we can use Generalized Linear Model for analyzing the response variable.
+The only things we need to define now is:
+
+- the so called **systematic component** or **linear predictor** which is a function of the explanatory variables similarly as in normal regression model, it is like $\eta_i=X_i\beta=\beta_0+\sum_{j=1}^px_{ij}\beta_j$
+
+- **link function** $g(\theta)$ which is the mathematical expression that connects the value of the linear predictor with the response Y. So it has to map the set of real numbers $\mathbb{R}$ in which the linear predictor takes values to the range of values in which the parameter of interest lies.For binary data the canonical link function is the *logit function* $g(\pi)=log\left(\frac{\pi}{1-\pi}\right)$ or the *probit link function* $g(\pi)=\Phi^{-1}(\pi)$ which is the inverse of the Normal CDF, or the *log-log link function* $g(\pi)=log\{-log(1-\pi)\}$ which is less popular link, but it models more efficiently the tails of the distribution , especially when asymmetry between low and high probability values is observed.
+
+
+Using all the explanatory variables we have the Generalized Linear Model is:
+
+$$
+Y_i\sim Bernoulli(p_i)\\
+logit(p_i)=log\left(\frac{p_i}{1-p_i}\right)=\beta_0+\beta_1 x_{i1}+\beta_2 x_{i2}+\beta_3 x_{i3}+\beta_4 x_{i4}+\beta_5 x_{i5}+\beta_6 x_{i6}+\beta_7 x_{i7}+\beta_8 x_{i9}+\beta_9 x_{i9}+\beta_{10} x_{i10}+\beta_{11} x_{i11}\\
+\beta_i\sim Normal\left(\mu=0,\tau^2=\frac{1}{10^{6}}\right)\qquad for \ \ i \in{1,2,...,11}
+$$
+Model coefficients $\beta_i$ are typically defined as Normal because they can take values between all real numbers and the Normal supports is exactly $(-\infty,+\infty)$.
+
+## Jags implementation
+
+```{r echo=FALSE}
+
+#initialize variables 
+x1<-dataset$fixed.acidity
+x2<-dataset$volatile.acidity
+x3<-dataset$citric.acid
+x4<-dataset$residual.sugar
+x5<-dataset$chlorides
+x6<-dataset$free.sulfur.dioxide#/mean(dataset$free.sulfur.dioxide)
+x7<-dataset$total.sulfur.dioxide#/mean(dataset$total.sulfur.dioxide)
+x8<-dataset$density
+x9<-dataset$pH
+x10<-dataset$sulphates
+x11<-dataset$alcohol
+
+#function for convert qualitative output ('bad','good') into numeric values(0,1)
+convertion<-function(x){
+  if (x=='good') return(1)
+  if (x=='bad') return(0)
+}
+convertion_vec<-Vectorize(convertion)
+
+y<-convertion_vec(dataset$quality)
+y<-as.vector(y)
+
+#number pf observations
+N<- nrow(dataset)
+
+```
+
+```{r}
+model <- function(){
+  # Likelihood
+  for (i in 1:N){
+    y[i] ~ dbern(p[i])
+    logit(p[i]) <-beta0+beta1*x1[i] + beta2*x2[i] + beta3*x3[i] + beta4*x4[i] + beta5*x5[i] + beta6*x6[i] + beta7*x7[i] + beta8*x8[i] + beta9*x9[i] +beta10*x10[i]+beta11*x11[i]
+  }
+  
+  # Defining the prior beta parameters
+  beta0 ~ dnorm(0, 1.0E-6)
+  beta1 ~ dnorm(0, 1.0E-6)
+  beta2 ~ dnorm(0, 1.0E-6)
+  beta3 ~ dnorm(0, 1.0E-6)
+  beta4 ~ dnorm(0, 1.0E-6)
+  beta5 ~ dnorm(0, 1.0E-6)
+  beta6 ~ dnorm(0, 1.0E-6)
+  beta7 ~ dnorm(0, 1.0E-6)
+  beta8 ~ dnorm(0, 1.0E-6)
+  beta9 ~ dnorm(0, 1.0E-6)
+  beta10 ~ dnorm(0, 1.0E-6)
+  beta11 ~ dnorm(0, 1.0E-6)
+}
+```
+
+```{r echo=FALSE,include=FALSE}
+# jags set up
+
+data.jags <- list("y", "N","x1" ,'x2', "x3", "x4" ,"x5" ,"x6","x7", "x8", "x9", "x10", "x11")
+
+mod.params <- c("beta0","beta1","beta2", "beta3", "beta4","beta5","beta6","beta7", "beta8", "beta9", "beta10", "beta11")
+
+n.chains <- 3
+mod.fit <- jags(data = data.jags,# DATA
+                model.file = model,#MODEL
+                parameters.to.save = mod.params,# TRACKING
+                n.chains = n.chains, n.iter = 10000, n.burnin = 1000,n.thin=10)
+
+
+```
+
+
+### Summary table of $\beta$ coefficients
+
+Running JAGS with 3 chains, 10000 iterations, a burn-in of 1000 steps and a thinning of 10 we have:
+
+```{r echo=FALSE}
+knitr::kable(mod.fit$BUGSoutput$summary,digits=4)%>%
+  kable_styling() %>%
+  row_spec(c(1,2,7,11,12), background  = "#F4A582")
+```
+*DIC of the model  `r mod.fit$BUGSoutput$DIC`.*
+
+The point estimates for $\beta_i$ are shown in the "Mean" column. The $95\%$ credible intervals for $\beta_0,\beta_1,\beta_4,\beta_8,\beta_9$ contain 0 , which means that the variables $x0 (intercept),\ x1\  (fixed acidity),\ x4\ (residual sugar),\ x8\ (density) ,\ x9\ (pH)$ can be statistically insignificant and we can try to remove them and see if the DIC decreases.
+Moreover also for the other parameters we have nice results:
+
+- **Rhat** ( potential scale reduction factor ) is a measure of the convergence of 
+the chain, it indicates if all the chains converge to the same value, in particular
+it is a comparison between chains variance and within chains variance, if they are similar they become from the same distribution.
+The value of Rhat must be between 1 and 1.1
+
+- **n.eff** indicates the *effective sample size* that can be interpreted as the number of independent Monte Carlo samples necessary to give the same precision of the MCMC samples. Grater this value , lower the autocorrelation between the MCMC steps and better is the final approximation.
+In fact let's make a remark on the quality of a MCMC :
+The quality of this approximation derives from the variance of the MCMC that we have performed and that is equal to the MC variance plus a term that depends on the correlation of the samples within the Markov chain. Generally this term is positive and so we expect an approximation further away form the MC's one.The formula is:
+$$
+Var_{MCMC}[\hat{I}]=\frac{Var[\hat{I}]}{S_{eff}}=\left(1+2\sum_{k=1}^{\infty}\rho_k\right)\frac{\sigma^2}{t}
+$$
+where $\hat{I}$ is the mean of the parameter we are interested in.
+
+- **DIC** (deviance information criterion) is particular useful in Bayesian model selection, because it measures the "goodness-of-fit" of the model.There isn't a standard absolute scale for DIC, it can take any positive value and it is equal to $DIC=D_{\hat{\theta}}(y)+2p_D$ where $D_{\hat{\theta}}(y)$ is the deviance of the model (-2*log(likelihood)) and $p_D$ is the number of effective ("unconstrained") parameters in the model.Since $D_{\hat{\theta}}(y)$ will decrease as the number of parameters in a model increases, the $p_D$ term compensates for this effect by favoring models with a smaller number of parameters.Models with smaller DIC should be preferred to models with larger DIC.
+
+# Frequentist Logistic Regression
+
+```{r echo=FALSE}
+model_glm<-glm(y ~x1+x2+x3+x4+x5+x6+x7+x8+x9+x10+x11,family=binomial(link = "logit"))
+
+```
+
+```{r echo=FALSE}
+knitr::kable(coef(summary(model_glm)),digits=4)%>%
+  kable_styling() %>%
+  row_spec(c(1,2,5,9,10), background  = "#92C5DE")
+```
+
+As we can see from this summary ,the estimated coefficients obtained by the frequentist approach are very similar to the ones obtained with jags. Also the AIC score is similar : `r model_glm$aic` ( we are comparing AIC and DIC because In models with negligible prior information, DIC will be approximately equivalent to AIC ). As these results indicates that *x0 (intercept), x1 (fixed acidity), x4 (residual sugar), x8 (density) , x9 (pH)* maybe are not so informative,appropriate for the model.
+
+Let's try to remove them ans see the results.
+
+## Bayesian Logistic Regression with features selection 
+
+As said above we can try to eliminate some features in the model as see what happens. After some trials and trying different combination with the features that initially seem the less informative *(intercept,x1,x4,x8,x9)* I find that the features that really compromise the tests for convergence that we will see later is the *intercept,x4 and x9*.
+
+```{r}
+model_filtered <- function(){
+  # Likelihood
+  for (i in 1:N){
+    y[i] ~ dbern(p[i])
+    logit(p[i]) <-beta1*x1[i] + beta2*x2[i] + beta3*x3[i]  +beta5*x5[i] + beta6*x6[i] + beta7*x7[i]+beta8*x8[i]+beta10*x10[i]+beta11*x11[i]
+  }
+  
+  # Defining the prior beta parameters
+  beta1 ~ dnorm(0, 1.0E-6)
+  beta2 ~ dnorm(0, 1.0E-6)
+  beta3 ~ dnorm(0, 1.0E-6)
+  beta5 ~ dnorm(0, 1.0E-6)
+  beta6 ~ dnorm(0, 1.0E-6)
+  beta7 ~ dnorm(0, 1.0E-6)
+  beta8 ~ dnorm(0, 1.0E-6)
+  beta10 ~ dnorm(0, 1.0E-6)
+  beta11 ~ dnorm(0, 1.0E-6)
+}
+```
+
+```{r echo=FALSE,include=FALSE}
+# jags set up
+
+data.jags <- list("y", "N" ,"x1","x2", "x3" ,"x5" ,"x6","x7","x8", "x10", "x11")
+
+mod.params <- c("beta1", "beta2", "beta3","beta5","beta6","beta7","beta8", "beta10", "beta11")
+
+n.chains <- 3
+mod.fit_filtered <- jags(data = data.jags,# DATA
+                model.file = model_filtered,#MODEL
+                parameters.to.save = mod.params,# TRACKING
+                n.chains = n.chains, n.iter = 10000, n.burnin = 1000,n.thin=10)
+
+
+```
+
+
+```{r echo=FALSE}
+knitr::kable(mod.fit_filtered$BUGSoutput$summary,digits=4)
+```
+Moreover removing them the DIC slightly reduces to `r mod.fit_filtered$BUGSoutput$DIC` 
+
+```{r echo=FALSE}
+chainArray <- mod.fit_filtered$BUGSoutput$sims.array
+```
+
+## MCMC plots
+
+Let's see the plots of the Markov chain, the density distribution of the values along the chain and the autocorrelation between these values.
+
+
+```{r echo=FALSE,fig.width=12,fig.height=2,fig.align='center'}
+# beta 1 plots
+
+beta_1_df<-data.frame(beta_1=chainArray[,1,1],index=1:900)
+
+p1<-ggplot(data=beta_1_df,aes(index,beta_1))+
+  geom_line(color='#B2182B',lwd=0.5)+
+  xlab('Iteration')+
+  ylab(expression(beta[1]))+
+  ggtitle(expression(paste('Trace-plot of ', beta[1])))+
+  theme(plot.title.position = 'plot', 
+      plot.title = element_text(hjust = 0.5))
+
+p2<-ggplot(beta_1_df, aes(beta_1)) +
+  geom_density(fill="#B2182B",alpha=0.4)+
+  xlab(expression(beta[1]))+
+  ggtitle(expression(paste('Density plot of ',beta[1])))
+
+b1_acf <- acf(chainArray[,1,1], plot = FALSE)
+b1_acf_df <- with(b1_acf, data.frame(lag, acf))
+
+p3 <- ggplot(data=b1_acf_df, mapping=aes(x=lag, y=acf)) +
+      geom_bar(stat = "identity", position = "identity",fill = '#B2182B')+
+      ggtitle(expression(paste('Autocorrelation plot of ',beta[1])))
+
+grid.arrange(p1, p2,p3, ncol=3)
+```
+
+
+```{r echo=FALSE,fig.width=12,fig.height=2,fig.align='center'}
+# beta 2 plots
+
+beta_2_df<-data.frame(beta_2=chainArray[,1,4],index=1:900)
+
+p1<-ggplot(data=beta_2_df,aes(index,beta_2))+
+  geom_line(color='#D6604D',lwd=0.5)+
+  xlab('Iteration')+
+  ylab(expression(beta[2]))+
+  ggtitle(expression(paste('Trace-plot of ', beta[2])))+
+  theme(plot.title.position = 'plot', 
+      plot.title = element_text(hjust = 0.5))
+
+p2<-ggplot(beta_2_df, aes(beta_2)) +
+  geom_density(fill="#D6604D",alpha=0.4)+
+  xlab(expression(beta[2]))+
+  ggtitle(expression(paste('Density plot of ',beta[2])))
+
+b2_acf <- acf(chainArray[,1,4], plot = FALSE)
+b2_acf_df <- with(b2_acf, data.frame(lag, acf))
+
+p3 <- ggplot(data=b2_acf_df, mapping=aes(x=lag, y=acf)) +
+      geom_bar(stat = "identity", position = "identity",fill = '#D6604D')+
+      ggtitle(expression(paste('Autocorrelation plot of ',beta[2])))
+
+grid.arrange(p1, p2,p3, ncol=3)
+```
+
+```{r echo=FALSE,fig.width=12,fig.height=2,fig.align='center'}
+# beta 3 plots
+
+beta_3_df<-data.frame(beta_3=chainArray[,1,5],index=1:900)
+
+p1<-ggplot(data=beta_3_df,aes(index,beta_3))+
+  geom_line(color='#F4A582',lwd=0.5)+
+  xlab('Iteration')+
+  ylab(expression(beta[3]))+
+  ggtitle(expression(paste('Trace-plot of ', beta[3])))+
+  theme(plot.title.position = 'plot', 
+      plot.title = element_text(hjust = 0.5))
+
+p2<-ggplot(beta_3_df, aes(beta_3)) +
+  geom_density(fill="#F4A582",alpha=0.4)+
+  xlab(expression(beta[3]))+
+  ggtitle(expression(paste('Density plot of ',beta[3])))
+
+b3_acf <- acf(chainArray[,1,5], plot = FALSE)
+b3_acf_df <- with(b3_acf, data.frame(lag, acf))
+
+p3 <- ggplot(data=b3_acf_df, mapping=aes(x=lag, y=acf)) +
+      geom_bar(stat = "identity", position = "identity",fill = '#F4A582')+
+      ggtitle(expression(paste('Autocorrelation plot of ',beta[3])))
+
+grid.arrange(p1, p2,p3, ncol=3)
+```
+
+
+
+```{r echo=FALSE,fig.width=12,fig.height=2,fig.align='center'}
+# beta 5 plots
+
+beta_5_df<-data.frame(beta_5=chainArray[,1,6],index=1:900)
+
+p1<-ggplot(data=beta_5_df,aes(index,beta_5))+
+  geom_line(color='#D1E5F0',lwd=0.5)+
+  xlab('Iteration')+
+  ylab(expression(beta[5]))+
+  ggtitle(expression(paste('Trace-plot of ', beta[5])))+
+  theme(plot.title.position = 'plot', 
+      plot.title = element_text(hjust = 0.5))
+
+p2<-ggplot(beta_5_df, aes(beta_5)) +
+  geom_density(fill="#D1E5F0",alpha=0.4)+
+  xlab(expression(beta[5]))+
+  ggtitle(expression(paste('Density plot of ',beta[5])))
+
+b5_acf <- acf(chainArray[,1,6], plot = FALSE)
+b5_acf_df <- with(b5_acf, data.frame(lag, acf))
+
+p3 <- ggplot(data=b5_acf_df, mapping=aes(x=lag, y=acf)) +
+      geom_bar(stat = "identity", position = "identity",fill = '#D1E5F0')+
+      ggtitle(expression(paste('Autocorrelation plot of ',beta[5])))
+
+grid.arrange(p1, p2,p3, ncol=3)
+```
+
+
+```{r echo=FALSE,fig.width=12,fig.height=2,fig.align='center'}
+# beta 6 plots
+
+beta_6_df<-data.frame(beta_6=chainArray[,1,7],index=1:900)
+
+p1<-ggplot(data=beta_6_df,aes(index,beta_6))+
+  geom_line(color='#92C5DE',lwd=0.5)+
+  xlab('Iteration')+
+  ylab(expression(beta[6]))+
+  ggtitle(expression(paste('Trace-plot of ', beta[6])))+
+  theme(plot.title.position = 'plot', 
+      plot.title = element_text(hjust = 0.5))
+
+p2<-ggplot(beta_6_df, aes(beta_6)) +
+  geom_density(fill="#92C5DE",alpha=0.4)+
+  xlab(expression(beta[6]))+
+  ggtitle(expression(paste('Density plot of ',beta[6])))
+
+b6_acf <- acf(chainArray[,1,7], plot = FALSE)
+b6_acf_df <- with(b6_acf, data.frame(lag, acf))
+
+p3 <- ggplot(data=b6_acf_df, mapping=aes(x=lag, y=acf)) +
+      geom_bar(stat = "identity", position = "identity",fill = '#92C5DE')+
+      ggtitle(expression(paste('Autocorrelation plot of ',beta[6])))
+
+grid.arrange(p1, p2,p3, ncol=3)
+```
+
+```{r echo=FALSE,fig.width=12,fig.height=2,fig.align='center'}
+# beta 7 plots
+
+beta_7_df<-data.frame(beta_7=chainArray[,1,8],index=1:900)
+
+p1<-ggplot(data=beta_7_df,aes(index,beta_7))+
+  geom_line(color='#4393C3',lwd=0.5)+
+  xlab('Iteration')+
+  ylab(expression(beta[7]))+
+  ggtitle(expression(paste('Trace-plot of ', beta[7])))+
+  theme(plot.title.position = 'plot', 
+      plot.title = element_text(hjust = 0.5))
+
+p2<-ggplot(beta_7_df, aes(beta_7)) +
+  geom_density(fill="#4393C3",alpha=0.4)+
+  xlab(expression(beta[7]))+
+  ggtitle(expression(paste('Density plot of ',beta[7])))
+
+b7_acf <- acf(chainArray[,1,8], plot = FALSE)
+b7_acf_df <- with(b7_acf, data.frame(lag, acf))
+
+p3 <- ggplot(data=b7_acf_df, mapping=aes(x=lag, y=acf)) +
+      geom_bar(stat = "identity", position = "identity",fill = '#4393C3')+
+      ggtitle(expression(paste('Autocorrelation plot of ',beta[7])))
+
+grid.arrange(p1, p2,p3, ncol=3)
+```
+
+```{r echo=FALSE,fig.width=12,fig.height=2,fig.align='center'}
+# beta 8 plots
+
+beta_8_df<-data.frame(beta_8=chainArray[,1,9],index=1:900)
+
+p1<-ggplot(data=beta_8_df,aes(index,beta_8))+
+  geom_line(color='#2166AC',lwd=0.5)+
+  xlab('Iteration')+
+  ylab(expression(beta[8]))+
+  ggtitle(expression(paste('Trace-plot of ', beta[8])))+
+  theme(plot.title.position = 'plot', 
+      plot.title = element_text(hjust = 0.5))
+
+p2<-ggplot(beta_8_df, aes(beta_8)) +
+  geom_density(fill="#2166AC",alpha=0.4)+
+  xlab(expression(beta[8]))+
+  ggtitle(expression(paste('Density plot of ',beta[8])))
+
+b8_acf <- acf(chainArray[,1,9], plot = FALSE)
+b8_acf_df <- with(b8_acf, data.frame(lag, acf))
+
+p3 <- ggplot(data=b8_acf_df, mapping=aes(x=lag, y=acf)) +
+      geom_bar(stat = "identity", position = "identity",fill = '#2166AC')+
+      ggtitle(expression(paste('Autocorrelation plot of ',beta[8])))
+
+grid.arrange(p1, p2,p3, ncol=3)
+```
+
+
+
+```{r echo=FALSE,fig.width=12,fig.height=2,fig.align='center'}
+# beta 10 plots
+
+beta_10_df<-data.frame(beta_10=chainArray[,1,2],index=1:900)
+
+p1<-ggplot(data=beta_10_df,aes(index,beta_10))+
+  geom_line(color='#00008b',lwd=0.5)+
+  xlab('Iteration')+
+  ylab(expression(beta[10]))+
+  ggtitle(expression(paste('Trace-plot of ', beta[10])))+
+  theme(plot.title.position = 'plot', 
+      plot.title = element_text(hjust = 0.5))
+
+p2<-ggplot(beta_10_df, aes(beta_10)) +
+  geom_density(fill="#00008b",alpha=0.6)+
+  xlab(expression(beta[10]))+
+  ggtitle(expression(paste('Density plot of ',beta[10])))
+
+b10_acf <- acf(chainArray[,1,2], plot = FALSE)
+b10_acf_df <- with(b10_acf, data.frame(lag, acf))
+
+p3 <- ggplot(data=b10_acf_df, mapping=aes(x=lag, y=acf)) +
+      geom_bar(stat = "identity", position = "identity",fill = '#00008b')+
+      ggtitle(expression(paste('Autocorrelation plot of ',beta[10])))
+
+grid.arrange(p1, p2,p3, ncol=3)
+```
+
+```{r echo=FALSE,fig.width=12,fig.height=2,fig.align='center'}
+# beta 11 plots
+
+beta_11_df<-data.frame(beta_11=chainArray[,1,3],index=1:900)
+
+p1<-ggplot(data=beta_11_df,aes(index,beta_11))+
+  geom_line(color='#8a2be2',lwd=0.5)+
+  xlab('Iteration')+
+  ylab(expression(beta[11]))+
+  ggtitle(expression(paste('Trace-plot of ', beta[11])))+
+  theme(plot.title.position = 'plot', 
+      plot.title = element_text(hjust = 0.5))
+
+p2<-ggplot(beta_11_df, aes(beta_11)) +
+  geom_density(fill="#8a2be2",alpha=0.4)+
+  xlab(expression(beta[11]))+
+  ggtitle(expression(paste('Density plot of ',beta[11])))
+
+b11_acf <- acf(chainArray[,1,3], plot = FALSE)
+b11_acf_df <- with(b11_acf, data.frame(lag, acf))
+
+p3 <- ggplot(data=b11_acf_df, mapping=aes(x=lag, y=acf)) +
+      geom_bar(stat = "identity", position = "identity",fill = '#8a2be2')+
+      ggtitle(expression(paste('Autocorrelation plot of ',beta[11])))
+
+grid.arrange(p1, p2,p3, ncol=3)
+```
+
+
+As we can see all the Markov chains remains in the steady state , and also the autocorrelation between consecutive values of the chain is very small. In particular a Markov chain with high autocorrelation moves around the parameter space slowly,taking a long time to achieve the correct balance among the different regions of the parameter space. An independent MC sampler has zero autocorrelation and can jump between different regions of the parameter space in one step. Moreover the higher the autocorrelation in the chain, the larger the MCMC variance and the worse the approximation of the quantity of interest is.
+
+
+## Model checking diagnosis
+
+```{r echo=FALSE}
+coda.fit <- coda::as.mcmc(mod.fit_filtered)
+```
+
+### Geweke Diagnostic
+
+The **Geweke diagnostic** takes two nonoverlapping parts (usually the first 0.1 (after the burn-in) and last 0.5 proportions) of the Markov chain and compares the means of both parts, using a difference of means test to see if the two parts of the chain are from the same distribution (null hypothesis). If the two means are equal the chain is probable that is going to converge. 
+
+The test statistic is a standard Z-score: the difference between the two sample means divided by its estimated standard error adjusted for autocorrelation .
+
+
+```{r echo=FALSE}
+g<-coda::geweke.diag(coda.fit)
+matrix_g<-cbind(g[[1]]$z,g[[2]]$z,g[[3]]$z)
+colnames(matrix_g)<-c('Z-score chain 1','Z-score chain 2','Z-score chain 3')
+knitr::kable(t(matrix_g),digits=4)
+
+```
+```{r echo=FALSE,fig.align='center'}
+coda::geweke.plot(coda.fit[[1]])
+```
+As we can see from the plots of the of the Z-scores of the first chain the majority of the values are inside the area $(-1.965,+1.965)$ so we almost always we accept the equality of the means.
+
+## Heidelberg and Welch Diagnostic
+
+The Heidelberg and Welch diagnostic calculates a test statistic to accept or reject
+the null hypothesis that the Markov chain is from a stationary distribution.
+
+The diagnostic consists of two parts:
+
+First Part:
+
+1. Generate a chain of N iterations and define an α level.
+2. Calculate the test statistic on the whole chain. Accept or
+reject null hypothesis that the chain is from a stationary
+distribution.
+3. If null hypothesis is rejected, discard the first 10% of the
+chain. Calculate the test statistic and accept or reject null.
+4. If null hypothesis is rejected, discard the next 10% and
+calculate the test statistic.
+5. Repeat until null hypothesis is accepted or 50% of the chain is
+discarded. If test still rejects null hypothesis, then the chain
+fails the test and needs to be run longer.
+
+Second Part:
+
+If the chain passes the first part of the diagnostic, then it takes the
+part of the chain not discarded from the first part to test the
+second part.
+The halfwidth test calculates half the width of the (1 − α)%
+credible interval around the mean.
+If the ratio of the halfwidth and the mean is lower than some $\epsilon$,
+then the chain passes the test. Otherwise, the chain must be run
+out longer.
+
+```{r echo=FALSE}
+heidel<-coda::heidel.diag(coda.fit)
+
+convertion_heidel<-function(x){
+  if (x==1) return('passed')
+  if (x==0) return('failed')
+}
+convertion_heidel_vec<-Vectorize(convertion_heidel)
+heidel_matrix<-cbind(convertion_heidel_vec(heidel[[1]][,1]),
+                     heidel[[1]][,2],
+                     heidel[[1]][,3],
+                     convertion_heidel_vec(heidel[[1]][,4]),
+                     heidel[[1]][,5],
+                     heidel[[1]][,6])
+colnames(heidel_matrix)<-c('Stationarity test','start iteration','p-value','Halfwidth test','Mean','Halfwidth')                  
+knitr::kable(heidel_matrix,digits=3)
+```
+
+All tests are **passed** so we can say that the Markov chain reaches the stationary distribution and that the accuracy of our estimations is small enough (intervals small enough). 
+
+## Gelman and Rubin Multiple Sequence Diagnostic
+
+Steps (for each parameter):
+
+1. Run m ≥ 2 chains of length 2n from overdispersed starting
+values.
+2. Discard the first n draws in each chain.
+3. Calculate the within-chain and between-chain variance.
+4. Calculate the estimated variance of the parameter as a
+weighted sum of the within-chain and between-chain variance.
+5. Calculate the potential scale reduction factor.
+
+### Within Chain Variance
+
+$$
+W=\frac{1}{m}\sum_{j=1}^m s_j^2
+$$
+where 
+$$
+s_j^2=\frac{1}{n-1}\sum_{i=1}^n(\theta_{ij}-\bar{\theta}_j)^2
+$$
+$s_j^2$is just the formula for the variance of the $jth$ chain. $W$ is then
+just the mean of the variances of each chain.
+
+### Between Chain Variance
+
+$$
+B=\frac{n}{m-1}\sum_{j=1}^m(\bar{\theta_j}-\bar{\bar{\theta}})^2
+$$
+where
+$$
+\bar{\bar{\theta}}=\frac{1}{m}\sum_{j=1}^{m}\bar{\theta_j}
+$$
+
+
+This is the variance of the chain means multiplied by n because
+each chain is based on n draws.
+
+### Estimated Variance
+
+We can then estimate the variance of the stationary distribution as
+a weighted average of W and B.
+
+$$
+\hat{Var(\theta)}=\left(1-\frac{1}{n}\right)W+\frac{1}{n}B
+$$
+
+Because of overdispersion of the starting values, this overestimates
+the true variance, but is unbiased if the starting distribution equals
+the stationary distribution (if starting values were not
+overdispersed).
+
+### Potential Scale Reduction Factor
+
+The potential scale reduction factor is
+$$
+\hat{R}=\sqrt{\frac{\hat{Var(\theta)}}{W}}
+$$
+
+When $\hat{R}$ is high (perhaps greater than 1.1 or 1.2), then we should
+run our chains out longer to improve convergence to the stationary
+distribution.
+
+```{r echo=FALSE,fig.align='center'}
+gel<-coda::gelman.diag(coda.fit)
+knitr::kable(gel$psrf)
+```
+
+All the values are near $1$ which indicates that all 10000 iterations are enough for convergence to the stationary distribution.
+
+
+## Validate model: Simulation 
+
+To check if the MCMC implementation is correct we can run it on simulated data and verify if it is able to recover the model parameters we have fixed.
+The steps are the following :
+
+1. Fix the sample size , in this case I chose the same number of observation we have initially
+
+2. Generate data from the ones we have, here we can compute the ECDF and then sample from it (sampling from the empirical distribution function ecdf is the same as resampling with replacement from the sample y). This is just bootstrapping.
+
+3. Fix the model parameters, here I have chosen the ones obtained by the previous model
+
+4. Compute the linear predictor and the sigmoid value (inverse logit function).
+
+5. Generate the output as a $Bernoulli$ r.v. with probability equal to the value of the sigmoid.
+
+6. Run JAGS and see if it is able to recovery the parameters that generate the data.
+
+```{r}
+#sample size
+N<-nrow(dataset)
+
+#simulated data 
+x1_simulation<-sample(x1,N,replace=TRUE)
+x2_simulation<-sample(x2,N,replace=TRUE)
+x3_simulation<-sample(x3,N,replace=TRUE)
+x5_simulation<-sample(x5,N,replace=TRUE)
+x6_simulation<-sample(x6,N,replace=TRUE)
+x7_simulation<-sample(x7,N,replace=TRUE)
+x8_simulation<-sample(x8,N,replace=TRUE)
+x10_simulation<-sample(x10,N,replace=TRUE)
+x11_simulation<-sample(x11,N,replace=TRUE)
+
+
+#fixed model parameters
+beta_1_sim<-mod.fit_filtered$BUGSoutput$summary[1,1]
+beta_2_sim<-mod.fit_filtered$BUGSoutput$summary[4,1]
+beta_3_sim<-mod.fit_filtered$BUGSoutput$summary[5,1]	
+beta_5_sim<-mod.fit_filtered$BUGSoutput$summary[6,1]
+beta_6_sim<-mod.fit_filtered$BUGSoutput$summary[7,1]
+beta_7_sim<-mod.fit_filtered$BUGSoutput$summary[8,1]
+beta_8_sim<-mod.fit_filtered$BUGSoutput$summary[9,1]
+beta_10_sim<-mod.fit_filtered$BUGSoutput$summary[2,1]
+beta_11_sim<-mod.fit_filtered$BUGSoutput$summary[3,1]
+
+
+#linear predictor
+linpred <- beta_1_sim*x1_simulation+beta_2_sim*x2_simulation + beta_3_sim*x3_simulation +beta_5_sim*x5_simulation + beta_6_sim*x6_simulation + beta_7_sim*x7_simulation+ beta_8_sim*x8_simulation+beta_10_sim*x10_simulation+beta_11_sim*x11_simulation
+
+# probability for bernoulli 
+pis <- exp(linpred)/(1+exp(linpred))
+
+#simulated output
+y_simulation <- rbinom(nrow(dataset), 1, pis)
+
+  
+```
+
+
+```{r}
+
+model_filtered_simulation<- function(){
+  # Likelihood
+  for (i in 1:N){
+    y_simulation[i] ~ dbern(p[i])
+    logit(p[i]) <- beta1*x1_simulation[i] + beta2*x2_simulation[i] +  beta3*x3_simulation[i]  + beta5*x5_simulation[i] + beta6*x6_simulation[i] + beta7*x7_simulation[i] + beta8*x8_simulation[i]  + beta10*x10_simulation[i] + beta11*x11_simulation[i]
+  }
+  
+  # Defining the prior beta parameters
+  beta1 ~ dnorm(0, 1.0E-6)
+  beta2 ~ dnorm(0, 1.0E-6)
+  beta3 ~ dnorm(0, 1.0E-6)
+  beta5 ~ dnorm(0, 1.0E-6)
+  beta6 ~ dnorm(0, 1.0E-6)
+  beta7 ~ dnorm(0, 1.0E-6)
+  beta8 ~ dnorm(0, 1.0E-6)
+  beta10 ~ dnorm(0, 1.0E-6)
+  beta11 ~ dnorm(0, 1.0E-6)
+}
+```
+
+
+```{r echo=FALSE,include=FALSE}
+data.jags_simulation <- list("y_simulation", "N" ,"x1_simulation","x2_simulation", "x3_simulation" ,"x5_simulation" ,"x6_simulation","x7_simulation","x8_simulation", "x10_simulation", "x11_simulation")
+
+mod.params <- c("beta1","beta2", "beta3","beta5","beta6","beta7","beta8", "beta10", "beta11")
+
+n.chains <- 3
+mod.fit_filtered_simulation <- jags(data = data.jags_simulation,# DATA
+                model.file = model_filtered_simulation,#MODEL
+                parameters.to.save = mod.params,# TRACKING
+                n.chains = n.chains, n.iter = 10000, n.burnin = 2000,n.thin=10)
+```
+
+```{r echo=FALSE}
+knitr::kable(mod.fit_filtered_simulation$BUGSoutput$summary,digits=4)
+```
+
+As we can see the values recovered from JAGS are very close to the ones I have fixed ,this means that our MCMC implementation is correct.
+
+
+## Posterior inference 
+
+We have checked that all the chains have passed the test of convergence so we can gather them and make a more accurate estimation of the parameters of interest.
+The principal statistics that I decide to find is the posterior points estimate, the equi-tailed intervals and the highest posterior density interval (HPD).
+
+```{r echo=FALSE}
+
+chainMat <- mod.fit_filtered$BUGSoutput$sims.matrix
+
+beta.hat.jags <- colMeans(chainMat)
+names(beta.hat.jags)<-NULL
+# Intervals
+cred <- 0.95
+beta.ET.jags <- apply(chainMat, 2, quantile, prob=c((1-cred)/2, 1-(1-cred)/2))
+
+# What about the HPD?
+beta.HPD.jags <- coda::HPDinterval(as.mcmc(chainMat))
+```
+
+```{r echo=FALSE}
+posterior_matrix<-cbind(beta.hat.jags,
+                    t(beta.ET.jags)[,1],
+                    t(beta.ET.jags)[,2],
+                    beta.HPD.jags[,1],
+                    beta.HPD.jags[,2])
+colnames(posterior_matrix)<-c('point estimate','Quantile interval left','Quantile interval right','HPD interval left','HPD interval right' )
+```
+
+```{r echo=FALSE}
+knitr::kable(posterior_matrix,digits=4)
+```
+
+## Model Evaluation
+
+Now we have all the necessary things for evaluate the performances of our model.
+We have "trained" the model on the $80\%$ observations of the original dataset, let's predict the result for the test set and compare with the real output. 
+
+```{r}
+
+x1_test<-dataset_test$fixed.acidity
+x2_test<-dataset_test$volatile.acidity
+x3_test<-dataset_test$citric.acid
+x4_test<-dataset_test$residual.sugar
+x5_test<-dataset_test$chlorides
+x6_test<-dataset_test$free.sulfur.dioxide
+x7_test<-dataset_test$total.sulfur.dioxide
+x8_test<-dataset_test$density
+x9_test<-dataset_test$pH
+x10_test<-dataset_test$sulphates
+x11_test<-dataset_test$alcohol
+
+y_test<-convertion_vec(dataset_test$quality)
+y_test<-as.vector(y_test)
+
+linear_pred_test<-beta.hat.jags[1]*x1_test+beta.hat.jags[4]*x2_test+
+             beta.hat.jags[5]*x3_test+beta.hat.jags[6]*x5_test+
+             beta.hat.jags[7]*x6_test+beta.hat.jags[8]*x7_test+
+             beta.hat.jags[9]*x8_test+beta.hat.jags[2]*x10_test+
+             beta.hat.jags[3]*x11_test
+
+prob_predict_test<-exp(linear_pred_test)/(1+exp(linear_pred_test))
+
+y_pred<-rbinom(nrow(dataset_test),1,prob_predict_test)
+
+accuracy<-mean(y_test==y_pred)
+```
+
+The accuracy reached is: `r accuracy` !! This is a really good result utilizing only a simple classifier such as the Logistic Regression, we could try to improve the performance for example taking a more complex model ,maybe not a linear one, but a model with different combination of the features or different priors for the parameters.
+
+## References
+
+
