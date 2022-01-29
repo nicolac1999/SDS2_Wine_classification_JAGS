@@ -11,7 +11,7 @@ The project contains also an illustration of the features of the MCMC convergenc
 
 Kaggle Dataset : https://www.kaggle.com/nareshbhat/wine-quality-binary-classification
 
-![image](https://www.veganok.com/wp-content/uploads/2020/08/vino.jpg)
+![image](https://www.universitapopolaredicremona.it/wp-content/uploads/2020/01/VINO-3.jpg)
 
 Project for the Statistical Methods for  Data Science & Laboratory II course
 
